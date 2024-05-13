@@ -1,0 +1,2393 @@
+********************************************************************************;
+
+* CODE:          Project Overdrive.sas                                                 *;
+
+* MODIFIED DATE: July 31, 2023                                                             *;
+
+*                                                                                   *;
+
+* STEP      DESCRIPTION                                                             *;
+
+* ========= =================================================================== *;
+
+* 0)       Assign libraries                                                         *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 1)             Create a Hierachy 1 & 2 tables                                                       *;
+
+*                                These are to get the AgentParty_ID and Status                *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 2)       Create Appointment tables                                                         *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 3)       Creathe a Hierachy Role table                                                     *;
+
+*                                Brings in the role of the agent to be joined             *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 4)       Create Hierachy 3 table                                                                 *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 5)       Import the Agent list(main table) and join it to Hierachy 2 table *;
+
+*                                and to the Hierachy Role Table                                     *;
+
+*                                this is the file that has been imported from           *;
+
+*                                Excel, with the mertrics for the analysis                   *;
+
+*                                                                                                              *;
+
+*                Create the Agent_Participants_export list                                    *;
+
+*                                This was done to remove the agent field for QLIK       *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 6)       Import the Agent list(main table) and join it to Hierachy 2 table *;
+
+*                                and to the Hierachy Role Table                                     *;
+
+*                                this is the file that has been imported from                 *;
+
+*                                Excel, with the mertrics for the analysis                   *;
+
+*                                                                                                              *;
+
+*                Create the Participants list                                                       *;
+
+*                                Has only the basic personel info only used to join to    *;
+
+*                                main Agent table                                                   *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 7)       Create Agency Loop                                                                      *;
+
+*                                This loop goes through mapdat and returns the data on a *;
+
+*                                monthly basis per year starting with 2015                     *;
+
+*                                This pulls both metric of DWP and PIF from mapdat           *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 8)       Create Retention table to be join to Agent table                            *;
+
+*                                also created a prior year pif table, this was easier to *;
+
+*                                do than try to do within the do loop. Added this new    *;
+
+*                                table back on to the main table of Agent_list                *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 9)       Export file to reconcile with EPR                                                 *;
+
+*                                File is compared to agent Group# AA1365 for cosistency  *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 10)      Create ASR.Effective and Expiration Date                                       *;
+
+* -----------------------------------------------------------------------------     *;
+
+* 11)      Create a DO loop to cycle through each month and year for Premloss      *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 12)            Create an APPs dataset to left join onto Production file             *;
+
+* -----------------------------------------------------------------------------     *;
+
+* 13)      Create a production file(s) for all the needed metrics                   *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 14)                       Creating a Control Group                                            *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 15)      Create a Hierachy 3a & 4a tables                                            *;
+
+*                                These are to get the AgentParty_ID and Status                *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 16)      Combine Agent Number/AgentParty_ID data                                        *;
+
+*                                with manually added record(s)                                   *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 17)      Create List of Unique AgentParty_IDs                                         *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 18)      Create exclusion list of AgentParty_IDs that are associated with   *;
+
+*                                agents that share an agent number                             *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 19)            Remove all records with an AgentParty_ID from the exclusion list *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 20)            Find Earliest Appointment Date                                                     *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 21)            Create Production Control Data                                                     *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 22)            Create prior year pif 2021 table                                             *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 23)            Creating mapdat final table                                                        *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 24)            Create Premloss22 Table                                                                  *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 25)            Create apps table for 2022                                                         *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 26)            Summarize at Agent Number Level                                                    *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 27)            Combine datasets, joining on MAPDAT to keep only records with        *;
+
+*                                CL Written Premium                                                        *;
+
+*          Summarize by Agent Party ID (Person)                                              *;
+
+*                                Final Control table                                                   *;
+
+* ----------------------------------------------------------------------------- *;
+
+* 28)            Exporting all the datasets into one  excel workbook                         *;
+
+* ----------------------------------------------------------------------------- *;
+
+ 
+
+ 
+
+/*Authenticate with ASR and create an ASR Library*/
+
+%include '/ere/projects/.auth/ASRProd/ASRProd.sas';
+
+ 
+
+/*1)*/
+
+/*Create hierarchy reference*/
+
+ 
+
+/*Identify Agent(s) Assigned to each agent number*/
+
+PROC SQL;
+
+CREATE TABLE HIERARCHY AS
+
+select distinct
+
+(select LegacyAccountNumber from ASR.BookOfBusiness where BOB_ID = ah.AgencyHierarchyObject_ID) as legacyAgencyNumber,
+
+ah.AgencyHierarchyObject_ID as grp_bob_Id,
+
+(select LegacyAccountNumber from ASR.BookOfBusiness where BOB_ID = ahh.AgencyHierarchyObject_ID) as legacyAccountNumber,
+
+ahh.AgencyHierarchyObject_ID as Bob_Id
+
+,(select LegacyAgentNumber from ASR.agent where Agent_ID = ag.AgencyHierarchyObject_ID) as LegacyAgentNumber
+
+,ag.AgencyHierarchyObject_ID as Agent_Id
+
+,ag.AgentParty_ID
+
+,ahr.AgencyHierarchyRole AS Role
+
+,par.PartyName
+
+,ag.Status
+
+from ASR.AgencyHierarchy ah
+
+inner join ASR.HierarchyRelationship hr on hr.ParentHierarchy_ID = ah.AgencyHierarchy_ID and ah.AgencyHierarchyLevel = 'Group'
+
+inner join ASR.AgencyHierarchy ahh on ahh.AgencyHierarchy_ID = hr.ChildHierarchy_ID
+
+inner join ASR.HierarchyRelationship shr on shr.ParentHierarchy_ID = ahh.AgencyHierarchy_ID
+
+inner join ASR.AgencyHierarchy sp on sp.AgencyHierarchy_ID = shr.ChildHierarchy_ID
+
+inner join ASR.HierarchyRelationship aghr on aghr.ParentHierarchy_ID = sp.AgencyHierarchy_ID
+
+inner join ASR.AgencyHierarchy ag on ag.AgencyHierarchy_ID = aghr.ChildHierarchy_ID
+
+inner join ASR.AgencyHierarchyRole ahr on ahr.AgencyHierarchy_ID = ah.AgencyHierarchy_ID and ag.AgentParty_ID = ahr.AgentParty_ID
+
+LEFT JOIN ASR.Party par on par.AgentParty_ID = ag.AgentParty_ID
+
+order by
+
+legacyAgencyNumber
+
+,legacyAccountNumber
+
+,LegacyAgentNumber
+
+;
+
+QUIT;
+
+/* creates and lables fields from hieracrchy to be more efficently joined*/
+
+PROC SQL;
+
+      CREATE TABLE HIERARCHY_2a AS
+
+      SELECT DISTINCT
+
+      h.LegacyAgencyNumber AS Group,
+
+      h.LegacyAccountNumber AS Account,
+
+      SUBSTR(h.LegacyAgentNumber,1,6) AS Agent,
+
+      h.AgentParty_ID,
+
+      h.Role,
+
+      h.PartyName,
+
+      h.Status
+
+      FROM
+
+      WORK.HIERARCHY h
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*2)*/
+
+/*Creates table that has the effective date and when expiration date for when
+
+agents were/ are active
+
+*/
+
+PROC SQL;
+
+      CREATE TABLE Appointments AS
+
+      SELECT DISTINCT
+
+           par.PartyName,
+
+           par.AgentParty_ID,
+
+           par.PartyStatus, /* only pertains to the party ID  or person as a whole not to the anything from the appstatus*/
+
+           app.AppointmentState,
+
+           app.Appointment,
+
+           app.Appointed,
+
+           datepart(app.AppointmentEffectiveDate) format mmddyy10. as EffectiveDate,
+
+           datepart(app.AppointmentExpirationDate) format mmddyy10. as ExpirationDate,
+
+           app.AppointmentStatus
+
+ 
+
+      FROM
+
+           ASR.Party par
+
+      LEFT JOIN ASR.Appointment app on app.AgentParty_ID = par.AgentParty_ID
+
+/*    WHERE app.Appointed = 'Y'*/
+
+/*    AND app.AppointmentStatus not in ('Terminated')*/
+
+/*    AND (app.AppointmentExpirationDate is null or datepart(app.AppointmentExpirationDate) ge today())*/
+
+;
+
+quit;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*3)*/
+
+/*  create a Heirarchy table that brings in the role of the agent to be joined on to the main table*/
+
+Proc sql;
+
+      create table Heirarchy_role as
+
+      select distinct
+
+      AgentParty_Id,
+
+      AgencyHierarchyRole AS Role,
+
+      AgencyHierarchyRoleEffectiveDate as EffectiveDate,
+
+      AgencyHierarchyRoleExpirationDat as ExpirationDate,
+
+      Status
+
+ 
+
+      from
+
+           ASR.AgencyHierarchyRole
+
+      WHERE
+
+           AgencyHierarchyRole IN('LicensedPrincipalAgent','SubAgentProducer','CustomerServiceAgent')
+
+      GROUP BY
+
+           AgentParty_ID
+
+      HAVING
+
+           AgencyHierarchyRoleEffectiveDate = max(AgencyHierarchyRoleEffectiveDate)
+
+      ;
+
+QUIT;
+
+ 
+
+ 
+
+LIBNAME ASR CLEAR;
+
+ 
+
+/*Create Dummy Record for Mark A Fulk*/
+
+/*DATA Add_Agent;*/
+
+/*    Group = 'JJ1226';*/
+
+/*    Account = 'ZZ9999';*/
+
+/*    Agent = 'ZZ9999';*/
+
+/*    AgentParty_ID = 12340001;*/
+
+/*    PartyName = 'Mark A Fulk';*/
+
+/*    Status = 'Terminated';*/
+
+/*RUN;*/
+
+DATA HIERARCHY_2;
+
+      SET HIERARCHY_2a /*Add_Agent*/;
+
+RUN;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*4)*/
+
+/*Check Agent Number for Multiple Producers */
+
+/* - If the count is 1, no further action is needed*/
+
+/* - Investigate if the count is greater than 1*/
+
+PROC SQL;
+
+      CREATE TABLE HIERARCHY_3 AS
+
+      SELECT DISTINCT
+
+      h.Group,
+
+      h.Agent,
+
+      h.Role,
+
+      COUNT(h.Agent) AS Count
+
+      FROM
+
+      WORK.HIERARCHY_2a h
+
+      GROUP BY h.Agent
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/* 5)*/
+
+/*Import Participant List*/
+
+PROC IMPORT DATAFILE='/ere/ho/agency/DATA/Agency Administration Dept/Special Incentive Programs/Producer Overdrive Program/Continued Reporting/All Time Participants.xlsx'
+
+      DBMS=XLSX REPLACE
+
+      OUT=WORK.Agent_List/*_TEMP*/;
+
+      GETNAMES=YES;
+
+RUN;
+
+/*This is one of the main export files to Excel,
+
+Removes the agent field for better joining in QLIK.
+
+*/
+
+PROC SQL;
+
+      CREATE TABLE Agent_Participants_export AS
+
+      SELECT DISTINCT
+
+           h.Group,
+
+/*         h.Account,*/
+
+/*         h.Agent,*/
+
+           h.AgentParty_ID,
+
+           h.PartyName,
+
+           h3.Role,
+
+/*         h.Status,*/
+
+           a.Session,
+
+           a.Program_Session,
+
+           a.Agency,
+
+           a.Goal,
+
+           a.Name,
+
+           a.Coach,
+
+           a.Finished,
+
+/*         a.Active,*/
+
+/*         h3.Count,*/
+
+           a.Session_Start,
+
+           a.Session_End
+
+          
+
+      FROM
+
+           WORK.HIERARCHY_2 h
+
+           LEFT JOIN WORK.Agent_List a ON h.AgentParty_ID = a.AgentParty_ID AND a.Agency = h.Group
+
+           LEFT JOIN work.HEIRARCHY_ROLE h3 ON h.Agentparty_Id = h3.Agentparty_ID
+
+      WHERE
+
+           a.Name IS NOT NULL
+
+/*         This agent number was being excluded because multiple agents were assigned to it and the participant is not then active agent*/
+
+/*         Check for multiple agents on then sanme number with the "Count" field*/
+
+/*         AND h.Agent NOT IN('AA1652')*/
+
+           AND h3.Role IN('LicensedPrincipalAgent','SubAgentProducer','CustomerServiceAgent')
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*6)*/
+
+/*Import Participant List*/
+
+PROC IMPORT DATAFILE='/ere/ho/agency/DATA/Agency Administration Dept/Special Incentive Programs/Producer Overdrive Program/Continued Reporting/All Time Participants.xlsx'
+
+      DBMS=XLSX REPLACE
+
+      OUT=WORK.Agent_List/*_TEMP*/;
+
+      GETNAMES=YES;
+
+RUN;
+
+/*create the is Agent_Participant table to join the other tables on to*/
+
+PROC SQL;
+
+      CREATE TABLE Agent_Participants AS
+
+      SELECT DISTINCT
+
+           h.Group,
+
+/*         h.Account,*/
+
+           h.Agent,
+
+           h.AgentParty_ID,
+
+           h.PartyName,
+
+           h3.Role,
+
+           h.Status,
+
+           a.Session,
+
+           a.Program_Session,
+
+           a.Agency,
+
+           a.Goal,
+
+           a.Name,
+
+           a.Coach,
+
+           a.Finished,
+
+/*         a.Active,*/
+
+/*         h3.Count,*/
+
+           a.Session_Start,
+
+           a.Session_End
+
+     
+
+      FROM
+
+           WORK.HIERARCHY_2 h
+
+           LEFT JOIN WORK.Agent_List a ON h.AgentParty_ID = a.AgentParty_ID AND a.Agency = h.Group
+
+           LEFT JOIN work.HEIRARCHY_ROLE h3 ON h.Agentparty_Id = h3.Agentparty_ID
+
+      WHERE
+
+           a.Name IS NOT NULL
+
+/*         This agent number was being excluded because multiple agents were assigned to it and the participant is not then active agent*/
+
+/*         Check for multiple agents on then sanme number with the "Count" field*/
+
+/*         AND h.Agent*/
+
+           AND h3.Role IN('LicensedPrincipalAgent','SubAgentProducer','CustomerServiceAgent')
+
+      ;
+
+QUIT;
+
+ 
+
+/*Exporting the file to reconcile with EPR, may copy and paste throughout the code to reconcile at various parts*/
+
+/*PROC EXPORT DATA=WORK.Agent_Participants*/
+
+/**/
+
+/*     OUTFILE="/ere/ho/agency/DATA/Agency Administration Dept/Special Incentive Programs/Producer Overdrive Program/Continued Reporting/exports/agent_list.xlsx"*/
+
+/*     DBMS=XLSX REPLACE;*/
+
+/*     SHEET=test;*/
+
+/*run;*/
+
+/*---------------------------------------------------------------------------------------*/
+
+/*7)*/
+
+/*Creating a Year and Monthly loop can add new metrics for a more comprehesive table*/
+
+ 
+
+PROC SQL;
+
+CREATE TABLE Work.DWP_agent
+
+      (Year NUM(4),
+
+      Month NUM(2),
+
+      PriorYear NUM(4),
+
+      Region CHAR(50),
+
+      Branch CHAR(50),
+
+      DSM CHAR(50),
+
+      Group CHAR(6),
+
+      Name CHAR(50),
+
+      Agent Char(6),
+
+/*    AgentParty_Id Char(50),*/
+
+/*    PartyStatus Char(20),*/
+
+/*    LOB_type char(50),*/
+
+      NewDWP NUM format=dollar20.0,
+
+      RenewalDWP NUM format=dollar20.0,
+
+      TotalDWP NUM format=dollar20.0,
+
+      NewPif NUM format=Comma20.0,
+
+      RenPif NUM format=Comma20.0,
+
+      TotalPif NUM format=Comma20.0
+
+/*    Ag_Type CHAR(2),*/
+
+/*    newagent NUM FORMAT=MMDDYY10.*/
+
+/*    NoNewBusDt NUM FORMAT=MMDDYY10.,*/
+
+/*    ApptTermDt NUM FORMAT=MMDDYY10.,*/
+
+/*    PersLinesExpDt NUM FORMAT=MMDDYY10.,*/
+
+/*    CommLinesExpDt NUM FORMAT=MMDDYY10.*/
+
+ 
+
+      );
+
+QUIT;
+
+ 
+
+ 
+
+%MACRO Agency_Loop;
+
+ 
+
+%DO Year = 2015 %TO 2022;
+
+      %LET Year = %SYSFUNC(PUTN(&Year.,4.));
+
+ 
+
+%DO Month = 1 %TO 12;
+
+      %LET Month = %SYSFUNC(PUTN(&Month.,z2.));
+
+ 
+
+DATA _NULL_;
+
+      PUTLOG "***************************************";
+
+      PUTLOG "*** Current Year:  &Year.                 ***";
+
+      PUTLOG "*** Current Month: &Month.                     ***";
+
+      PUTLOG "***************************************";
+
+RUN;
+
+ 
+
+/*DATA Control_Card;*/
+
+/*    CurrMonth = &Month.;*/
+
+/*    CurrYear = &Year.;*/
+
+/*RUN;*/
+
+ 
+
+DATA _NULL_;
+
+      CALL SYMPUTX('PriorYear',put(&Year.-1,4.)); /*Prior Year, 4 Digit*/
+
+RUN;
+
+ 
+
+OPTIONS MISSING=0;
+
+ 
+
+/*************************************************/
+
+/*** Create List of Current Month Agency Names ***/
+
+/*************************************************/
+
+/*Adding DWP, PIF, etc. each time the loop is completed per agent*/
+
+ 
+
+proc sql;
+
+      Insert into Work.DWP_agent
+
+ 
+
+      Select Distinct
+
+           &Year. as Year,
+
+           &Month. as Month,
+
+           &PriorYear. as PriorYear,
+
+      a.Region,a.Branch,a.DSM,a.Group,a.Name,a.agent,/*c.lob_type*/
+
+           Case
+
+                 When SUM(b.newprem)is NULL THEN 0
+
+                 Else SUM(b.newprem)
+
+                 End as newprem,
+
+           Case
+
+                 When SUM(b.renprem)is NULL THEN 0
+
+                 Else SUM(b.renprem)
+
+                 End as renprem,
+
+          
+
+           Case
+
+                 When SUM(b.renprem + b.newprem)is Null
+
+                 THEN 0
+
+                 Else SUM(b.renprem + b.newprem)
+
+                 End as Totalprem,
+
+           Case
+
+                 When SUM(b.newpif)is NULL THEN 0
+
+                 Else SUM(b.newpif)
+
+                 End as newpif,
+
+           Case
+
+                 When SUM(b.renpif) is NULL THEN 0
+
+                 Else SUM(b.renpif)
+
+                 End as renpif,
+
+           Case
+
+                 When SUM(b.renpif+ b.newpif) is NULL
+
+                 THEN 0
+
+                 Else SUM(b.renpif + b.newpif)
+
+                 End as TotalPif
+
+ 
+
+      From
+
+           agttbl.agtbl&month.&year. a
+
+           left join mapdat.mapdat&year.&Month. b
+
+                 ON a.agent = b.agent
+
+           left join MSCTBL.lobtype c
+
+                 ON c.LOB = b.lob
+
+/*    # we only want commercial lines of products*/
+
+      Where c.lob_type in('COMMERCIAL AUTO','COMMERCIAL OTHER','WORKERS COMP')
+
+      Group by
+
+           a.agent;
+
+     
+
+quit;
+
+ 
+
+%END;
+
+%END;
+
+%MEND Agency_Loop;
+
+%Agency_Loop;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*8)*/
+
+/* join  back to main table(DWP_agent), this is prior year pif
+
+this is to help create retention metric in QLik*/
+
+data Py_pif;
+
+      set DWP_Agent;
+
+      keep Year Month Agent TotalPif;
+
+/* create retention table, joining this on our main table DWP_agent table*/
+
+proc sql;
+
+      create table Retention as
+
+      select Distinct
+
+           f.*,
+
+           Ren.totalpif as PYpif,
+
+           f.renpif/ren.totalpif as retention format = percent10.4
+
+      from
+
+           work.dwp_agent f
+
+           left join py_pif Ren on f.agent = Ren.agent
+
+           and f.prioryear = ren.year
+
+           and f.month = ren.month
+
+      where f.year >= 2016 /* this where clause is b/c we dont want the year 2014 in our table*/
+
+      ;
+
+            quit;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*9)*/
+
+/*Statement to keep group AA1365, so we can reconcile this table to EPR based on that group*/
+
+ 
+
+/*Data Reconcile;*/
+
+/*    Set work.Retention;*/
+
+/*    if Group = 'AA1365';*/
+
+/*run;*/
+
+ 
+
+/*Exporting the file to reconcile with EPR, may copy and paste throughout the code to reconcile at various parts*/
+
+/*PROC EXPORT DATA=WORK.Reconcile*/
+
+/**/
+
+/*     OUTFILE="/ere/ho/agency/DATA/Agency Administration Dept/Special Incentive Programs/Producer Overdrive Program/Continued Reporting/exports/test.xlsx'*/
+
+/*     DBMS=XLSX REPLACE;*/
+
+/*     SHEET=GroupAA1365;*/
+
+/*run;*/
+
+ 
+
+%INCLUDE '/ere/projects/.auth/ASRProd/ASRProd.sas';
+
+/*---------------------------------------------------------------------------------------*/
+
+/*10)*/
+
+/*Pull Minimum P&C Appointment Date*/
+
+PROC SQL;
+
+      CREATE TABLE ASR_AppEffectiveDate AS
+
+      SELECT DISTINCT
+
+           ap.AgentParty_ID,
+
+           p.PartyName,
+
+           p.PartyStatus,
+
+            p.PartyType,
+
+           datepart(ap.AppointmentEffectiveDate) format MMDDYY10. AS AppointmentEffectiveDate
+
+      FROM
+
+           ASR.Appointment ap
+
+           LEFT JOIN ASR.party p ON ap.AgentParty_ID = p.AgentParty_ID
+
+      WHERE
+
+           p.PartyType = 'Person'
+
+      GROUP BY
+
+           ap.AgentParty_ID
+
+      HAVING
+
+           ap.AppointmentEffectiveDate = min(ap.AppointmentEffectiveDate)
+
+      ;
+
+QUIT;
+
+ 
+
+LIBNAME ASR Clear;
+
+ 
+
+%INCLUDE '/ere/projects/.auth/ASRProd/ASRProd.sas';
+
+ 
+
+/*Pull max P&C Appointment Date*/
+
+PROC SQL;
+
+      CREATE TABLE ASR_AppExpirDate AS
+
+      SELECT DISTINCT
+
+           ap.AgentParty_ID,
+
+           p.PartyName,
+
+           p.PartyStatus,
+
+           p.PartyType,
+
+           datepart(ap.AppointmentExpirationDate) format MMDDYY10. AS AppointmentExpirationDate
+
+      FROM
+
+           ASR.Appointment ap
+
+           LEFT JOIN ASR.party p ON ap.AgentParty_ID = p.AgentParty_ID
+
+      WHERE
+
+           p.PartyType = 'Person' and ap.Appointed ="Y"
+
+      GROUP BY
+
+           ap.AgentParty_ID
+
+      HAVING
+
+           ap.AppointmentExpirationDate = min(ap.AppointmentExpirationDate)
+
+      ;
+
+QUIT;
+
+ 
+
+LIBNAME ASR CLEAR;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*11)*/
+
+/*Creating a Year and Monthly loop for Premloss*/
+
+ 
+
+PROC SQL;
+
+CREATE TABLE Work.Premloss
+
+      (Year NUM(4),
+
+      Month NUM(2),
+
+      Region CHAR(50),
+
+      Branch CHAR(50),
+
+      DSM CHAR(50),
+
+      Group CHAR(6),
+
+      Name CHAR(50),
+
+      Agent Char(6),
+
+      Incurred NUM format = dollar20.0,
+
+      Earned NUM format = dollar20.0
+
+      );
+
+QUIT;
+
+ 
+
+ 
+
+%MACRO Agency_Loop;
+
+ 
+
+%DO Year = 2015 %TO 2022;
+
+      %LET Year = %SYSFUNC(PUTN(&Year.,4.));
+
+ 
+
+%DO Month = 1 %TO 12;
+
+      %LET Month = %SYSFUNC(PUTN(&Month.,z2.));
+
+ 
+
+DATA _NULL_;
+
+      PUTLOG "***************************************";
+
+      PUTLOG "*** Current Year:  &Year.                 ***";
+
+      PUTLOG "*** Current Month: &Month.                     ***";
+
+      PUTLOG "***************************************";
+
+RUN;
+
+ 
+
+/*DATA Control_Card;*/
+
+/*    CurrMonth = &Month.;*/
+
+/*    CurrYear = &Year.;*/
+
+/*RUN;*/
+
+ 
+
+/*DATA _NULL_;*/
+
+/*    CALL SYMPUTX('PriorYear',put(&Year.-1,4.)); /*Prior Year, 4 Digit*/*/
+
+/*RUN;*/
+
+ 
+
+OPTIONS MISSING=0;
+
+ 
+
+/*************************************************/
+
+/*** Create List of Current Month Agency Names ***/
+
+/*************************************************/
+
+ 
+
+proc sql;
+
+      Insert into Work.Premloss
+
+ 
+
+      Select Distinct
+
+           &Year. as Year,
+
+           &Month. as Month,
+
+      a.Region,a.Branch,a.DSM,a.Group,a.Name,a.agent,/*c.lob_type*/
+
+           Case
+
+                 when SUM(b.Incurred)is NULL THEN 0
+
+                 else SUM(b.Incurred)
+
+                 end as Incurred,
+
+           Case
+
+                 when SUM(b.Earned)is NULL THEN 0
+
+                 else SUM(b.Earned)
+
+                 end as Earned
+
+      From
+
+           agttbl.agtbl&month.&year. a
+
+           left join Premloss.premloss&year.&Month. b
+
+                 ON a.agent = b.agent
+
+           left join MSCTBL.lobtype c
+
+                 ON c.LOB = b.lob
+
+      where c.lob_type in('COMMERCIAL AUTO','COMMERCIAL OTHER','WORKERS COMP')
+
+      Group by
+
+           a.agent;
+
+     
+
+quit;
+
+ 
+
+%END;
+
+%END;
+
+%MEND Agency_Loop;
+
+%Agency_Loop;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*12)*/
+
+/*Creating a dataset for APPs to be added to the main prodution table*/
+
+ 
+
+libname apps '/ere/ho/agency/DATA/SAS/DATA/Apps' ACCESS=READONLY;
+
+ 
+
+DATA App_Data;
+
+SET APPS.Apps2015-APPS.Apps2022;
+
+RUN;
+
+ 
+
+PROC SQL;
+
+create table WORK.App_Data_2
+
+      as select distinct
+
+           b.agent,
+
+          b.LOB AS LOB,
+
+          b.policy_number AS Policyno,
+
+/*        b.Type,*/
+
+           l.LOB_Type,
+
+           b.RecvDate,
+
+           YEAR(b.RecvDate) AS Year,
+
+           MONTH(b.RecvDate) AS Month
+
+ 
+
+FROM App_Data b
+
+           LEFT JOIN MSCTBL.LOBType l ON b.LOB = l.LOB
+
+WHERE
+
+      l.LOB_Type IN('COMMERCIAL AUTO','COMMERCIAL OTHER','WORKERS COMP')
+
+;
+
+QUIT;
+
+ 
+
+PROC SQL;
+
+      CREATE TABLE App_Data_3 AS
+
+      SELECT DISTINCT
+
+           a.Agent,
+
+           a.Year,
+
+           a.Month,
+
+           COUNT(a.Policyno) AS Apps
+
+      FROM
+
+           WORK.App_Data_2 a
+
+      GROUP BY
+
+           a.Agent, a.Year, a.Month
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*13)*/
+
+/*Creating a production_month to tie back into main table*/
+
+ 
+
+DATA DWP_Agent_2;
+
+     SET WORK.DWP_Agent;
+
+     FORMAT Month_End MMDDYY10.;
+
+     Month_End = INTNX('MONTH',MDY(Month,1,Year),0,"END"); /*Create last day of month using production month and year*/
+
+RUN;
+
+ 
+
+PROC SQL;
+
+     CREATE TABLE Production_Months AS
+
+     SELECT DISTINCT
+
+           a.AgentParty_ID,
+
+           a.Agent,
+
+           d.Year,
+
+           d.Month,
+
+           d.NewDWP,
+
+           d.RenewalDWP,
+
+           d.Month_End,
+
+           a.Session_start,
+
+           INTCK('MONTH',a.Session_start,d.Month_End)+1 AS Prod_Months, /*Create months since program ended*/
+
+           CEIL((INTCK('MONTH',a.Session_start,d.Month_End)+1)/12) AS Prod_Year /*Assign year based on months since program ended*/
+
+     FROM
+
+           WORK.DWP_Agent_2 d
+
+           LEFT JOIN WORK.Agent_Participants a ON d.Agent = a.Agent
+
+     WHERE
+
+           a.Agentparty_Id IS NOT NULL
+
+     HAVING
+
+           INTCK('MONTH',a.Session_start,d.Month_End)+1 > 0 /*Keep only records for afte the program ended*/
+
+     ;
+
+QUIT;
+
+ 
+
+/* Creation of the MAIN production table for Producer Overdrive*/
+
+ 
+
+PROC SQL;
+
+ 
+
+      Create table Production_1 AS
+
+      SELECT DISTINCT
+
+           a.agent,
+
+           a.AgentParty_ID,
+
+           a.Role,
+
+           a.agency,
+
+           dwp.Year,
+
+           dwp.Month,
+
+           dwp.NewDWP as New_Prem,
+
+           dwp.RenewalDWP as Ren_Prem,
+
+           dwp.TotalDWP as Total_Prem,
+
+           dwp.Newpif as New_PIF,
+
+           dwp.Renpif as Ren_PIF,
+
+           dwp.Totalpif as Total_PIF,
+
+           prem.Incurred as Incurred,
+
+           prem.Earned as Earned,
+
+           app.Apps as Apps,
+
+           ren.Pypif as Pypif,
+
+           pm.Month_End,
+
+           pm.Session_start,
+
+           pm.Prod_months,
+
+           pm.Prod_year
+
+ 
+
+ 
+
+      FROM
+
+           WORK.DWP_agent dwp
+
+           LEFT JOIN Agent_Participants a ON dwp.agent = a.agent
+
+           LEFT JOIN work.premloss prem on prem.agent = dwp.agent
+
+                 and prem.year = dwp.year
+
+                 and prem.month = dwp.month
+
+           LEFT JOIN work.APP_DATA_3 app on app.agent = dwp.agent
+
+                 and app.year = dwp.year
+
+                 and app.month = dwp.month
+
+           LEFT JOIN work.retention ren on ren.agent = dwp.agent
+
+                 and ren.year = dwp.year
+
+                 and ren.month = dwp.month
+
+           LEFT JOIN work.Production_months pm on pm.agent = dwp.agent
+
+                 and pm.year = dwp.year
+
+                 and pm.month = dwp.month
+
+      Where
+
+           a.agentparty_id is not null
+
+          
+
+      ;
+
+Quit;
+
+ 
+
+/*Production_2 file this is to add in Production_Status and Tenure to the main table
+
+*/
+
+Proc Sql;
+
+    Create Table Production_2 AS
+
+        Select Distinct
+
+            agl.*,
+
+            agp.Status as Production_Status,
+
+            aed.AppointmentEffectiveDate as Production_Tenure
+
+        From
+
+            Work.agent_list agl
+
+            Left Join work.agent_participants agp on agl.agentparty_id = agp.agentparty_id
+
+            Left join work.ASR_APPEFFECTIVEDATE aed on agl.agentparty_id = aed.agentparty_id
+
+        Order By
+
+/*         Orders those who are active,termintationpending, and terminated then will be deduped in the next section*/
+
+            agl.Agentparty_Id,
+
+            (case when agp.Status = 'Active' then 5
+
+                 when agp.Status = 'TerminationPending' then 4
+
+                 when agp.Status = 'Terminated' then 3
+
+                 else 0 End) DESC
+
+;
+
+quit;
+
+ 
+
+/*De-Dupe the data on Agentparty_ID*/
+
+/**/
+
+Proc Sort data=Production_2 out=Production_2a nodupkey;
+
+by Agentparty_ID;
+
+run;
+
+ 
+
+/*create production 3 file, this one wil be for export. Joins the pervious 2 tables,
+
+and slims down the roles to only commerical lines and where production months starts at 1*/
+
+ 
+
+proc sql;
+
+      create table production_Final as
+
+           SELECT DISTINCT
+
+                 a.*,
+
+                 b.name,
+
+                 b.Production_Tenure,
+
+                 b.Production_Status
+
+ 
+
+           FROM
+
+                 work.production_1 a
+
+                 LEFT JOIN work.Production_2a b on a.agentparty_ID = b.agentparty_ID
+
+           Where
+
+                 a.Prod_months >0
+
+                 and a.Role in('LicensedPrincipalAgent','SubAgentProducer','CustomerServiceAgent')
+
+           Group by
+
+                 a.agent
+
+      ;
+
+quit;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*14)*/
+
+/*Creation of Control Group Code*/
+
+ 
+
+/*Create List of Agent Number/AgentParty_ID Associations*/
+
+ 
+
+/*Authenticate with ASR and create an ASR Library*/
+
+%include '/ere/projects/.auth/ASRProd/ASRProd.sas';
+
+/*---------------------------------------------------------------------------------------*/
+
+/*15)*/
+
+/*Create hierarchy reference*/
+
+ 
+
+PROC SQL;
+
+CREATE TABLE HIERARCHY_3a AS
+
+select distinct
+
+(select LegacyAccountNumber from ASR.BookOfBusiness where BOB_ID = ah.AgencyHierarchyObject_ID) as legacyAgencyNumber,
+
+ah.AgencyHierarchyObject_ID as grp_bob_Id,
+
+(select LegacyAccountNumber from ASR.BookOfBusiness where BOB_ID = ahh.AgencyHierarchyObject_ID) as legacyAccountNumber,
+
+ahh.AgencyHierarchyObject_ID as Bob_Id
+
+,(select LegacyAgentNumber from ASR.agent where Agent_ID = ag.AgencyHierarchyObject_ID) as LegacyAgentNumber
+
+,ag.AgencyHierarchyObject_ID as Agent_Id
+
+,ag.AgentParty_ID
+
+,ahr.AgencyHierarchyRole AS Role
+
+,par.PartyName
+
+,ag.Status
+
+from ASR.AgencyHierarchy ah
+
+inner join ASR.HierarchyRelationship hr on hr.ParentHierarchy_ID = ah.AgencyHierarchy_ID and ah.AgencyHierarchyLevel = 'Group'
+
+inner join ASR.AgencyHierarchy ahh on ahh.AgencyHierarchy_ID = hr.ChildHierarchy_ID
+
+inner join ASR.HierarchyRelationship shr on shr.ParentHierarchy_ID = ahh.AgencyHierarchy_ID
+
+inner join ASR.AgencyHierarchy sp on sp.AgencyHierarchy_ID = shr.ChildHierarchy_ID
+
+inner join ASR.HierarchyRelationship aghr on aghr.ParentHierarchy_ID = sp.AgencyHierarchy_ID
+
+inner join ASR.AgencyHierarchy ag on ag.AgencyHierarchy_ID = aghr.ChildHierarchy_ID
+
+inner join ASR.AgencyHierarchyRole ahr on ahr.AgencyHierarchy_ID = ah.AgencyHierarchy_ID and ag.AgentParty_ID = ahr.AgentParty_ID
+
+LEFT JOIN ASR.Party par on par.AgentParty_ID = ag.AgentParty_ID
+
+order by
+
+legacyAgencyNumber
+
+,legacyAccountNumber
+
+,LegacyAgentNumber
+
+;
+
+QUIT;
+
+ 
+
+PROC SQL;
+
+      CREATE TABLE HIERARCHY_4a AS
+
+      SELECT DISTINCT
+
+      h.LegacyAgencyNumber AS Group,
+
+      h.LegacyAccountNumber AS Account,
+
+      SUBSTR(h.LegacyAgentNumber,1,6) AS Agent,
+
+      h.AgentParty_ID,
+
+      h.Role,
+
+      h.PartyName,
+
+      h.Status
+
+      FROM
+
+      WORK.HIERARCHY h
+
+/*    WHERE*/
+
+/*    h.Status = 'Active'*/
+
+      ;
+
+QUIT;
+
+ 
+
+/*Create Dummy Record for Mark A Fulk*/
+
+/*DATA Add_Agent;*/
+
+/*    Group = 'JJ1226';*/
+
+/*    Account = 'ZZ9999';*/
+
+/*    Agent = 'ZZ9999';*/
+
+/*    AgentParty_ID = 12340001;*/
+
+/*    PartyName = 'Mark A Fulk';*/
+
+/*    Status = 'Terminated';*/
+
+/*RUN;*/
+
+/*---------------------------------------------------------------------------------------*/
+
+/*16)*/
+
+/*Combine Agent Number/AgentParty_ID data with manually added record(s)*/
+
+DATA HIERARCHY_4a;
+
+      SET HIERARCHY_4a
+
+      Add_Agent;
+
+RUN;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*17)*/
+
+/*Create List of Unique AgentParty_IDs*/
+
+PROC SQL;
+
+      CREATE TABLE Agent_List_a AS
+
+      SELECT DISTINCT
+
+           h.AgentParty_ID,
+
+           h.Agent,
+
+           h.PartyName,
+
+           h.Role,
+
+           COUNT(h.Agent) AS Count
+
+      FROM
+
+           WORK.HIERARCHY_4a h
+
+/*         LEFT JOIN AGTTBL.tblMainR a ON h.Agent = a.Agent*/
+
+           LEFT JOIN AGTTBL.AGTBL122022 a ON h.Agent = a.Agent
+
+      WHERE
+
+           h.Status = 'Active' AND
+
+           a.Ag_Type IS NULL
+
+      GROUP BY
+
+           h.Agent
+
+/*    HAVING*/
+
+/*         COUNT(h.Agent) = 1*/
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*18)*/
+
+/*Create exclusion list of AgentParty_IDs that are associated with agents that share an agent number*/
+
+DATA Agent_List_excl;
+
+      SET Agent_List_a;
+
+      IF COUNT ne 1;
+
+      KEEP AgentParty_ID;
+
+PROC SORT NODUPKEY DATA=Work.Agent_List_excl;
+
+      BY AgentParty_ID;
+
+RUN;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*19)*/
+
+/*Remove all records with an AgentParty_ID from the exclusion list*/
+
+PROC SQL;
+
+      CREATE TABLE Agent_List AS
+
+      SELECT DISTINCT
+
+           a.*
+
+      FROM
+
+           WORK.Agent_List_a a
+
+           LEFT JOIN WORK.AGENT_LIST_EXCL b ON a.AgentParty_ID = b.AgentParty_ID
+
+      WHERE
+
+           b.AgentParty_ID IS NULL
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*20)*/
+
+ 
+
+/*Find Earliest Appointment Date*/
+
+PROC SQL;
+
+      CREATE TABLE ASR_AppEffectiveDate AS
+
+      SELECT DISTINCT
+
+           ap.AgentParty_ID,
+
+            p.PartyName,
+
+           p.PartyStatus,
+
+           p.PartyType,
+
+           datepart(ap.AppointmentEffectiveDate) format MMDDYY10. AS AppointmentEffectiveDate
+
+      FROM
+
+           ASR.Appointment ap
+
+           LEFT JOIN ASR.party p ON ap.AgentParty_ID = p.AgentParty_ID
+
+      WHERE
+
+           p.PartyType = 'Person'
+
+      GROUP BY
+
+           ap.AgentParty_ID
+
+      HAVING
+
+           ap.AppointmentEffectiveDate = min(ap.AppointmentEffectiveDate)
+
+      ;
+
+QUIT;
+
+ 
+
+LIBNAME ASR CLEAR;
+
+ 
+
+/*---------------------------------------------------------------------------------------*/
+
+/*21)*/
+
+/*Create Production Data*/
+
+/*Summarize Written Premium and PIF with MAPDAT*/
+
+PROC SQL;
+
+      CREATE TABLE MAPDAT_Agent AS
+
+      SELECT DISTINCT
+
+            a.Agent,a.agentparty_ID,a.partyname,a.role,
+
+           CASE
+
+                 WHEN SUM(m.YTD_NewPrem) IS NULL THEN 0
+
+                 ELSE SUM(m.YTD_NewPrem)
+
+                 END AS New_Prem FORMAT = COMMA20.0,
+
+           CASE
+
+                 WHEN SUM(m.YTD_RenPrem) IS NULL THEN 0
+
+                 ELSE SUM(m.YTD_RenPrem)
+
+                 END AS Ren_Prem FORMAT = COMMA20.0,
+
+           CASE
+
+                 WHEN sum(m.YTD_NewPrem + m.YTD_RenPrem) is NULL
+
+                 THEN 0
+
+                 ELSE sum(m.YTD_NewPrem + m.YTD_RenPrem)
+
+                 END as Total_Prem Format = COMMA20.0,
+
+           CASE
+
+                 WHEN SUM(m.NewPIF) IS NULL THEN 0
+
+                 ELSE SUM(m.NewPIF)
+
+                 END AS New_PIF FORMAT = COMMA20.0,
+
+           CASE
+
+                 WHEN SUM(m.RenPIF) IS NULL THEN 0
+
+                 ELSE SUM(m.RenPIF)
+
+                 End AS Ren_Pif Format = comma20.0,
+
+           CASE
+
+                 WHEN sum(m.NewPIF + m.RenPIF) is NULL
+
+                 THEN 0
+
+                 ELSE sum(m.NewPIF + m.RenPIF)
+
+                 END as Total_PIF Format = COMMA20.0
+
+      FROM
+
+/*         AGTTBL.AGTBL122022 a*/
+
+/*         AGTTBL.AGTBL052023 a*/
+
+/*         WORK.HIERARCHY_2 a*/
+
+           WORK.Agent_List a
+
+           LEFT JOIN MAPDAT.MAPDAT202212 m ON a.Agent = m.Agent
+
+           LEFT JOIN MSCTBL.LOBType l ON m.LOB = l.LOB
+
+      WHERE
+
+           l.LOB_Type IN('COMMERCIAL AUTO','COMMERCIAL OTHER','WORKERS COMP')
+
+      GROUP BY
+
+           a.Agent
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*22)*/
+
+/*Create prior year pif 2021 table*/
+
+PROC sql;
+
+      CREATE TABLE py_pif_21 AS
+
+      SELECT DISTINCT
+
+           a.agent, a.agentparty_Id, a.partyname,
+
+           Case
+
+                 when SUM(m.newpif)is NULL THEN 0
+
+                 else SUM(m.newpif)
+
+                 end as newpif,
+
+           Case
+
+                 when SUM(m.renpif) is NULL THEN 0
+
+                 else SUM(m.renpif)
+
+                 end as renpif,
+
+           Case
+
+                 when SUM(m.renpif+ m.newpif) is NULL
+
+                 then 0
+
+                 else SUM(m.renpif + m.newpif)
+
+                 end as TotalPif
+
+ 
+
+      FROM
+
+/*         AGTTBL.AGTBL122022 a*/
+
+/*         AGTTBL.AGTBL052023 a*/
+
+/*         WORK.HIERARCHY_2 a*/
+
+      WORK.Agent_List a    
+
+           LEFT JOIN MAPDAT.MAPDAT202112 m ON a.Agent = m.Agent
+
+           LEFT JOIN MSCTBL.LOBType l ON m.LOB = l.LOB
+
+      WHERE
+
+           l.LOB_Type IN('COMMERCIAL AUTO','COMMERCIAL OTHER','WORKERS COMP')
+
+      GROUP BY
+
+           a.Agent
+
+      ;
+
+quit;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*23)*/
+
+/*creating mapdat final table*/
+
+Proc sql;
+
+      create table mapdat_3 as
+
+           select distinct
+
+           mapa.*,         
+
+           Case
+
+                 when sum(pypif.totalpif) is NULL
+
+                 then 0
+
+                 else sum(pypif.totalpif)
+
+                 end as pypif
+
+ 
+
+           From
+
+/*    WORK.Agent_List a*/
+
+/*    MAPDAT.MAPDAT202112*/
+
+/*    MSCTBL.LOBType*/
+
+                 work.mapdat_agent mapa
+
+                 left join work.py_pif_21 pypif on mapa.agent = pypif.agent
+
+           Where
+
+           mapa.Role IN('LicensedPrincipalAgent','SubAgentProducer','CustomerServiceAgent')
+
+           group by
+
+           mapa.agent
+
+      ;
+
+quit;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*24)*/
+
+/*Add Premloss22, these metrics help get compoents for Loss Ratio in the QLik app*/
+
+Proc sql;
+
+      CREATE table Premloss2022 as
+
+           Select Distinct
+
+                 a.agent,
+
+                 a.agentparty_id,
+
+           Case
+
+                 when SUM(b.Earned)is NULL THEN 0
+
+                 else SUM(b.Earned)
+
+                 end as Earned,
+
+           Case
+
+                 when SUM(b.Incurred)is NULL THEN 0
+
+                 else SUM(b.Incurred)
+
+                 end as Incurred
+
+      From
+
+           Work.agent_list a
+
+           left join Premloss.premloss2022 b
+
+                 ON a.agent = b.agent
+
+           left join MSCTBL.lobtype c
+
+                 ON c.LOB = b.lob
+
+      where c.lob_type in('COMMERCIAL AUTO','COMMERCIAL OTHER','WORKERS COMP')
+
+      Group by
+
+           a.agent;
+
+quit;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*25)*/
+
+/*Create apps table for 2022*/
+
+ 
+
+DATA App_Data;
+
+SET APPS.Apps2022;
+
+RUN;
+
+ 
+
+PROC SQL;
+
+create table WORK.App_Data_2022
+
+      as select distinct
+
+           b.agent,
+
+          b.LOB AS LOB,
+
+          b.policy_number AS Policyno,
+
+/*        b.Type,*/
+
+           l.LOB_Type,
+
+           b.RecvDate,
+
+           YEAR(b.RecvDate) AS Year,
+
+           MONTH(b.RecvDate) AS Month
+
+ 
+
+      FROM App_Data b
+
+           LEFT JOIN MSCTBL.LOBType l ON b.LOB = l.LOB
+
+      WHERE
+
+      l.LOB_Type IN('COMMERCIAL AUTO','COMMERCIAL OTHER','WORKERS COMP')
+
+      Group BY
+
+      b.agent
+
+;
+
+QUIT;
+
+ 
+
+PROC SQL;
+
+      CREATE TABLE App_Data_2_2022 AS
+
+      SELECT DISTINCT
+
+           a.Agent,
+
+                 Case
+
+                 when COUNT(b.Policyno) is null then 0
+
+                 else count(b.policyno)
+
+                 end AS Apps
+
+      FROM
+
+           work.agent_list a
+
+           Left join WORK.App_Data_2022 b on a.agent = b.agent
+
+      GROUP BY
+
+           a.Agent
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*26)*/
+
+/*Summarize at Agent Number Level*/
+
+/*Combine datasets, joining on MAPDAT to keep only records with CL Written Premium*/
+
+PROC SQL;
+
+      CREATE TABLE Agent_Production AS
+
+      SELECT DISTINCT
+
+           a.AgentParty_ID,
+
+           a.PartyName,
+
+           a.agent,
+
+           a.role,
+
+           apps.Apps,
+
+           a.New_Prem,
+
+           a.Ren_prem,
+
+           a.Total_Prem,
+
+           a.New_pif,
+
+           a.Ren_pif,
+
+           a.Total_Pif,
+
+           a.pypif,
+
+           prem.Earned AS Earned FORMAT = COMMA20.0,
+
+           prem.Incurred AS Incurred FORMAT = COMMA20.0
+
+ 
+
+      FROM
+
+/*    work.mapdat_agent mapa*/
+
+/*    work.py_pif_21 pypif*/
+
+           WORK.mapdat_3 a
+
+           LEFT JOIN WORK.App_data_2_2022 apps on a.agent = apps.agent
+
+           LEFT JOIN work.premloss2022 prem on a.agent = prem.agent
+
+      Group by
+
+           a.agent
+
+          
+
+      ;
+
+QUIT;
+
+/*---------------------------------------------------------------------------------------*/
+
+/*27)*/
+
+/*Summarize by Agent Party ID (Person)*/
+
+PROC SQL;
+
+      CREATE TABLE Control AS
+
+      SELECT DISTINCT
+
+           a.AgentParty_ID,
+
+           a.PartyName,
+
+           a.Role,
+
+           b.AppointmentEffectiveDate,
+
+           YEAR(b.AppointmentEffectiveDate)+2 AS Compare_Year,
+
+           sum(a.New_Prem) AS New_Prem FORMAT = COMMA20.2,
+
+           sum(a.Ren_Prem) AS Ren_Prem FORMAT = COMMA20.2,
+
+           SUM(a.New_PIF) AS New_PIF FORMAT = COMMA20.0,
+
+           SUM(a.Ren_PIF) AS Ren_PIF FORMAT = COMMA20.0,
+
+           SUM(a.New_PIF + a.Ren_PIF) as TotalPIF Format = COMMA20.0,
+
+           SUM(a.pypif) as Pypif format = comma20.0,
+
+           sum(a.Earned) as Earned FORMAT = COMMA20.0,
+
+           sum(a.Incurred) as Incurred,
+
+           Sum(a.apps) as Apps
+
+ 
+
+      FROM
+
+/*         WORK.mapdat_3 a*/
+
+/*         WORK.App_data_2_2022 apps*/
+
+/*         work.premloss2022 prem*/
+
+           WORK.Agent_Production a
+
+           LEFT JOIN WORK.ASR_AppEffectiveDate b ON a.AgentParty_ID = b.AgentParty_ID
+
+ 
+
+      WHERE
+
+           YEAR(b.AppointmentEffectiveDate) >= 2014
+
+           and YEAR(b.AppointmentEffectiveDate) <= 2020
+
+           and a.New_Prem >0
+
+           and a.Total_PIF >0
+
+ 
+
+      GROUP BY
+
+           a.AgentParty_ID
+
+      ;
+
+QUIT;
+
+ 
+
+/*---------------------------------------------------------------------------------------*/
+
+/*28)*/
+
+/*Exporting all the datasets into one EXCEL workbook to be imported into QLIK*/
+
+/**/
+
+/*PROC EXPORT DATA=Agent_Participants_export*/
+
+/*    OUTFILE="/ere/ho/agency/DATA/Agency Administration Dept/Special Incentive Programs/Producer Overdrive Program/Continued Reporting/exports/ProducerOVD.xlsx"*/
+
+/*    DBMS=XLSX REPLACE;*/
+
+/*    SHEET="Participants_list";*/
+
+/*PROC EXPORT DATA=work.PRODUCTION_Final*/
+
+/*    OUTFILE="/ere/ho/agency/DATA/Agency Administration Dept/Special Incentive Programs/Producer Overdrive Program/Continued Reporting/exports/ProducerOVD.xlsx"*/
+
+/*    DBMS=XLSX REPLACE;*/
+
+/*    SHEET="Production";*/
+
+/*PROC EXPORT DATA=work.Control*/
+
+/*    OUTFILE="/ere/ho/agency/DATA/Agency Administration Dept/Special Incentive Programs/Producer Overdrive Program/Continued Reporting/exports/ProducerOVD.xlsx"*/
+
+/*    DBMS=XLSX REPLACE;*/
+
+/*    SHEET="Control";*/
+
+/*RUN;*/
+
+ 
